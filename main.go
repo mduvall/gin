@@ -3,9 +3,11 @@ package main
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/codegangsta/envy/lib"
 	"github.com/codegangsta/gin/lib"
+	gosxnotifier "github.com/deckarep/gosx-notifier"
 	shellwords "github.com/mattn/go-shellwords"
 	"gopkg.in/urfave/cli.v1"
 
@@ -88,6 +90,10 @@ func main() {
 			Name:  "keyFile",
 			Usage: "TLS Certificate Key",
 		},
+		cli.BoolFlag{
+			Name:  "buildNotifications",
+			Usage: "(OSX only) Receive desktop notifications when builds fail",
+		},
 	}
 	app.Commands = []cli.Command{
 		{
@@ -159,12 +165,13 @@ func MainAction(c *cli.Context) {
 	shutdown(runner)
 
 	// build right now
-	build(builder, runner, logger)
+	withNotifications := c.GlobalBool("buildNotifications")
+	build(builder, runner, logger, withNotifications)
 
 	// scan for changes
 	scanChanges(c.GlobalString("path"), c.GlobalStringSlice("excludeDir"), all, func(path string) {
 		runner.Kill()
-		build(builder, runner, logger)
+		build(builder, runner, logger, withNotifications)
 	})
 }
 
@@ -181,12 +188,21 @@ func EnvAction(c *cli.Context) {
 
 }
 
-func build(builder gin.Builder, runner gin.Runner, logger *log.Logger) {
+func build(builder gin.Builder, runner gin.Runner, logger *log.Logger, withNotifications bool) {
 	err := builder.Build()
 	if err != nil {
 		buildError = err
 		logger.Printf("%sERROR! Build failed.%s\n", colorRed, colorReset)
 		fmt.Println(builder.Errors())
+
+		if withNotifications {
+			note := gosxnotifier.NewNotification("gin-build-failure")
+			note.Title = "Build failed!"
+			em := builder.Errors()
+			ss := strings.Split(em, "\n")
+			note.Message = strings.Join(ss[1:], "\n")
+			note.Push()
+		}
 	} else {
 		// print success only if there were errors before
 		if buildError != nil {
